@@ -184,12 +184,14 @@ class LocalDbService {
   }
   static Future<void> saveCamera(String id, String name, String location, {String status = 'Active'}) async {
     final s = requireScope();
+    if (!s.member.isAdmin) throw StateError('Administrator access required.');
     final cleanId = id.trim();
     final cleanName = name.trim();
     final cleanLoc = location.trim();
+    final cleanStatus = (status == 'Unknown' || status.isEmpty) ? 'Active' : status;
     // 1. Save directly to local SQLite so it ALWAYS works instantly, even offline
     await s.db.insert('cameras',
-      {'id': cleanId, 'name': cleanName, 'location': cleanLoc, 'status': status},
+      {'id': cleanId, 'name': cleanName, 'location': cleanLoc, 'status': cleanStatus},
       conflictAlgorithm: ConflictAlgorithm.replace);
     changed(s);
     if (s.active && identical(activeScope, s)) referenceRevision.value++;
@@ -202,6 +204,7 @@ class LocalDbService {
   }
   static Future<void> removeCamera(String id) async {
     final s = requireScope();
+    if (!s.member.isAdmin) throw StateError('Administrator access required.');
     final cleanId = id.trim();
     await s.db.delete('cameras', where: 'id = ?', whereArgs: [cleanId]);
     changed(s);
@@ -214,11 +217,27 @@ class LocalDbService {
   static Future<void> replaceReferences(LocalDbScope s, Map<String, dynamic> data) async {
     s.checkActive();
     await s.db.transaction((txn) async {
-      s.checkActive(); await txn.delete('cameras'); await txn.delete('zones');
+      s.checkActive();
+      final existingRows = await txn.query('cameras');
+      final localStatusMap = <String, String>{};
+      for (final row in existingRows) {
+        final cid = row['id'] as String?;
+        final cstat = row['status'] as String?;
+        if (cid != null && cstat != null && cstat != 'Unknown' && cstat.isNotEmpty) {
+          localStatusMap[cid] = cstat;
+        }
+      }
+      await txn.delete('cameras'); await txn.delete('zones');
       for (final raw in data['cameras'] as List) {
         final r = Map<String, dynamic>.from(raw as Map);
         if (r['org_id'] != s.member.orgId) throw StateError('Organization mismatch');
-        await txn.insert('cameras', {'id': r['id'], 'name': r['name'], 'location': r['location'], 'status': r['status']});
+        final cid = r['id']?.toString() ?? '';
+        final remoteStatus = r['status']?.toString();
+        // If remote status is 'Unknown' (default in Supabase schema), preserve local status or use 'Active'
+        final resolvedStatus = (remoteStatus != null && remoteStatus != 'Unknown' && remoteStatus.isNotEmpty)
+            ? (remoteStatus == 'Online' ? 'Active' : remoteStatus)
+            : (localStatusMap[cid] ?? 'Active');
+        await txn.insert('cameras', {'id': cid, 'name': r['name'], 'location': r['location'], 'status': resolvedStatus});
       }
       for (final raw in data['zones'] as List) {
         final r = Map<String, dynamic>.from(raw as Map);

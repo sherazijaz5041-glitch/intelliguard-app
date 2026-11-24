@@ -99,6 +99,17 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
   }
 
   Future<void> _addGuardDialog() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.isAdmin) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Only administrators can add guards.'),
+          backgroundColor: AppColors.fire,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     final nameCtrl = TextEditingController();
     final emailCtrl = TextEditingController();
     final phoneCtrl = TextEditingController();
@@ -275,6 +286,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
 
     if (saved == true && mounted) {
+      final auth = context.read<AuthProvider>();
+      if (!auth.isAdmin) return;
+      final scope = LocalDbService.requireScope();
+      if (!scope.member.isAdmin) return;
+
       final email = emailCtrl.text.trim();
       final name = nameCtrl.text.trim();
       // Map UI role labels to Supabase roles
@@ -283,7 +299,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
       // 1. Try to approve in Supabase first (the guard must have already registered)
       String? cloudError;
       try {
-        final scope = LocalDbService.requireScope();
         await CloudApi.call(scope, 'ig_approve_member', params: {
           'p_email': email,
           'p_role': supabaseRole,
@@ -292,7 +307,20 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
         cloudError = friendlyCloudError(e);
       }
 
-      // 2. Always save locally too (for display purposes)
+      if (cloudError != null && cloudError.contains('Administrator access required')) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Administrator access required.'),
+              backgroundColor: AppColors.fire,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      // 2. Save locally if admin
       await GuardManagementService.addGuard(
         name: name,
         email: email,
@@ -339,12 +367,14 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
   }
 
   Future<void> _toggleGuardStatus(Map<String, dynamic> guard) async {
+    if (!context.read<AuthProvider>().isAdmin) return;
     final current = guard['active'] as bool? ?? true;
     await GuardManagementService.updateGuard(guard['email'] as String, active: !current);
     _loadData();
   }
 
   Future<void> _changeGuardRole(Map<String, dynamic> guard) async {
+    if (!context.read<AuthProvider>().isAdmin) return;
     String role = guard['role'] as String? ?? 'Patrol Guard';
     final saved = await showDialog<bool>(
       context: context,
@@ -398,6 +428,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
   }
 
   Future<void> _removeGuard(Map<String, dynamic> guard) async {
+    if (!context.read<AuthProvider>().isAdmin) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -571,17 +602,17 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             const SizedBox(height: 20),
 
             // ── Section 1: Guard & Staff Management ───────────────────────
-            _sectionHeader(context, 'CAMPUS GUARDS & PERSONNEL', Icons.shield_rounded, action: TextButton.icon(
+            _sectionHeader(context, 'CAMPUS GUARDS & PERSONNEL', Icons.shield_rounded, action: auth.isAdmin ? TextButton.icon(
               onPressed: _addGuardDialog,
               icon: const Icon(Icons.person_add_rounded, size: 14, color: AppColors.accentPrimary),
               label: const Text('Add Guard', style: TextStyle(fontSize: 12, color: AppColors.accentPrimary, fontWeight: FontWeight.bold)),
-            )),
+            ) : null),
             const SizedBox(height: 10),
 
             if (_guards.isEmpty)
-              _emptySection(context, 'No security guards added', 'Tap Add Guard to register guards to your campus.', Icons.person_off_outlined)
+              _emptySection(context, 'No security guards added', auth.isAdmin ? 'Tap Add Guard to register guards to your campus.' : 'Contact an administrator to add campus guards.', Icons.person_off_outlined)
             else
-              for (final guard in _guards) _guardCard(context, guard),
+              for (final guard in _guards) _guardCard(context, guard, auth.isAdmin),
 
             const SizedBox(height: 20),
 
@@ -827,7 +858,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
   }
 
-  Widget _guardCard(BuildContext context, Map<String, dynamic> guard) {
+  Widget _guardCard(BuildContext context, Map<String, dynamic> guard, bool isAdmin) {
     final active = guard['active'] as bool? ?? true;
     final role = guard['role'] as String? ?? 'Guard';
 
@@ -897,42 +928,43 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               ],
             ),
           ),
-          PopupMenuButton<String>(
-            color: context.bgElevated,
-            icon: Icon(Icons.more_vert_rounded, size: 18, color: context.textMuted),
-            onSelected: (action) {
-              if (action == 'toggle') _toggleGuardStatus(guard);
-              if (action == 'role') _changeGuardRole(guard);
-              if (action == 'remove') _removeGuard(guard);
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                value: 'role',
-                child: Row(children: [
-                  Icon(Icons.edit_outlined, size: 16, color: context.textPrimary),
-                  const SizedBox(width: 8),
-                  Text('Change Role', style: TextStyle(color: context.textPrimary)),
-                ]),
-              ),
-              PopupMenuItem(
-                value: 'toggle',
-                child: Row(children: [
-                  Icon(active ? Icons.pause_circle_outline_rounded : Icons.play_circle_outline_rounded,
-                      size: 16, color: active ? AppColors.warning : AppColors.online),
-                  const SizedBox(width: 8),
-                  Text(active ? 'Set Inactive' : 'Set Active', style: TextStyle(color: context.textPrimary)),
-                ]),
-              ),
-              const PopupMenuItem(
-                value: 'remove',
-                child: Row(children: [
-                  Icon(Icons.delete_outline_rounded, size: 16, color: AppColors.fire),
-                  SizedBox(width: 8),
-                  Text('Remove Guard', style: TextStyle(color: AppColors.fire)),
-                ]),
-              ),
-            ],
-          ),
+          if (isAdmin)
+            PopupMenuButton<String>(
+              color: context.bgElevated,
+              icon: Icon(Icons.more_vert_rounded, size: 18, color: context.textMuted),
+              onSelected: (action) {
+                if (action == 'toggle') _toggleGuardStatus(guard);
+                if (action == 'role') _changeGuardRole(guard);
+                if (action == 'remove') _removeGuard(guard);
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'role',
+                  child: Row(children: [
+                    Icon(Icons.edit_outlined, size: 16, color: context.textPrimary),
+                    const SizedBox(width: 8),
+                    Text('Change Role', style: TextStyle(color: context.textPrimary)),
+                  ]),
+                ),
+                PopupMenuItem(
+                  value: 'toggle',
+                  child: Row(children: [
+                    Icon(active ? Icons.pause_circle_outline_rounded : Icons.play_circle_outline_rounded,
+                        size: 16, color: active ? AppColors.warning : AppColors.online),
+                    const SizedBox(width: 8),
+                    Text(active ? 'Set Inactive' : 'Set Active', style: TextStyle(color: context.textPrimary)),
+                  ]),
+                ),
+                const PopupMenuItem(
+                  value: 'remove',
+                  child: Row(children: [
+                    Icon(Icons.delete_outline_rounded, size: 16, color: AppColors.fire),
+                    SizedBox(width: 8),
+                    Text('Remove Guard', style: TextStyle(color: AppColors.fire)),
+                  ]),
+                ),
+              ],
+            ),
         ],
       ),
     );

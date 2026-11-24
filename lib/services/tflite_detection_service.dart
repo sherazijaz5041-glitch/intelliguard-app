@@ -67,9 +67,9 @@ class TFLiteDetectionService {
   static const _fireAvgThreshold = 0.85;
   static const _fireMinFrames = 6;
   static const _fireMinFlamePixels = 16;
-  static const _smokeBufferSize = 10;
-  static const _smokeAvgThreshold = 0.82;
-  static const _smokeMinFrames = 10;
+  static const _smokeBufferSize = 6;
+  static const _smokeAvgThreshold = 0.72;
+  static const _smokeMinFrames = 4;
   static const _vioBufferSize = 5;
   static const _vioConfirmThreshold = 4;
   static const _vioMinConfidence = 0.85;
@@ -436,7 +436,7 @@ class TFLiteDetectionService {
     final flamePixels = _countFlamePixels(resized);
 
     final fireConfirmed = fireBuf.length >= _fireMinFrames
-        && fireRollingAvg >= _fireAvgThreshold
+        && fireRollingAvg >= fireThreshold
         && flamePixels >= _fireMinFlamePixels;
 
     debugPrint('[DEBUG] Fire: prob=${fireProb.toStringAsFixed(3)}, '
@@ -453,7 +453,7 @@ class TFLiteDetectionService {
     final smokeRollingAvg = smokeBuf.reduce((a, b) => a + b) / smokeBuf.length;
 
     final smokeConfirmed = smokeBuf.length >= _smokeMinFrames
-        && smokeRollingAvg >= _smokeAvgThreshold;
+        && smokeRollingAvg >= smokeThreshold;
 
     debugPrint('[DEBUG] Smoke: prob=${smokeProb.toStringAsFixed(3)}, '
         'buf=${smokeBuf.map((p) => p.toStringAsFixed(2)).toList()}, '

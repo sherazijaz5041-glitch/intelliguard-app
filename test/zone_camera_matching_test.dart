@@ -172,10 +172,19 @@ void main() {
       expect(isValidStatus(''), isFalse);
     });
 
-    test('selectableStatuses always returns all 3 options', () {
-      for (final s in ['Detected', 'In Progress', 'Resolved']) {
-        expect(selectableStatuses(s).length, 3);
-      }
+    test('selectableStatuses enforces forward-only progression', () {
+      expect(selectableStatuses('Detected'), ['Detected', 'In Progress', 'Resolved']);
+      expect(selectableStatuses('In Progress'), ['In Progress', 'Resolved']);
+      expect(selectableStatuses('Resolved'), ['Resolved']);
+    });
+
+    test('isStatusTransitionAllowed prevents backwards transition', () {
+      expect(isStatusTransitionAllowed('Detected', 'In Progress'), isTrue);
+      expect(isStatusTransitionAllowed('Detected', 'Resolved'), isTrue);
+      expect(isStatusTransitionAllowed('In Progress', 'Resolved'), isTrue);
+      expect(isStatusTransitionAllowed('Resolved', 'Detected'), isFalse);
+      expect(isStatusTransitionAllowed('Resolved', 'In Progress'), isFalse);
+      expect(isStatusTransitionAllowed('In Progress', 'Detected'), isFalse);
     });
   });
 }

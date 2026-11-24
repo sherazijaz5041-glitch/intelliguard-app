@@ -401,6 +401,7 @@ class _LogCard extends StatelessWidget {
 
 
   void _showStatusSheet(BuildContext context) {
+    final allowed = selectableStatuses(alert.status);
     showModalBottomSheet(
       context: context,
       backgroundColor: context.bgCard,
@@ -423,8 +424,31 @@ class _LogCard extends StatelessWidget {
             const SizedBox(height: 4),
             Text('${alert.type}  ·  ${alert.cameraId}',
                 style: TextStyle(fontSize: 11, color: ctx.textSecondary)),
+            if (alert.status == 'Resolved') ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.online.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.online.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.check_circle_rounded, color: AppColors.online, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Incident resolved. Status is final and cannot be reverted.',
+                        style: TextStyle(fontSize: 12, color: ctx.textPrimary, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 20),
-            for (final status in eventStatuses)
+            for (final status in allowed)
               _StatusOption(
                 label: status,
                 selected: alert.status == status,

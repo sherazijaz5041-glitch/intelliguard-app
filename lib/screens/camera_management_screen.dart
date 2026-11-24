@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
 import '../services/local_db_service.dart';
 import '../services/guard_management_service.dart';
 import '../theme/app_theme.dart';
@@ -33,6 +35,17 @@ class _CameraManagementScreenState extends State<CameraManagementScreen> {
   }
 
   Future<void> _addOrEditCamera([Map<String, dynamic>? existing]) async {
+    final isAdmin = context.read<AuthProvider>().isAdmin;
+    if (!isAdmin) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Only administrators can add or configure cameras.'),
+          backgroundColor: AppColors.fire,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     final isEdit = existing != null;
     final idCtrl = TextEditingController(text: existing?['id']?.toString() ?? 'CAM-0${_cameras.length + 1}');
     final nameCtrl = TextEditingController(text: existing?['name']?.toString() ?? '');
@@ -175,6 +188,17 @@ class _CameraManagementScreenState extends State<CameraManagementScreen> {
   }
 
   Future<void> _confirmDelete(Map<String, dynamic> camera) async {
+    final isAdmin = context.read<AuthProvider>().isAdmin;
+    if (!isAdmin) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Only administrators can remove cameras.'),
+          backgroundColor: AppColors.fire,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -237,8 +261,12 @@ class _CameraManagementScreenState extends State<CameraManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final activeCount = _cameras.where((c) => (c['status'] ?? 'Active') == 'Active').length;
-    final standbyCount = _cameras.length - activeCount;
+    final isAdmin = context.watch<AuthProvider>().isAdmin;
+    final activeCount = _cameras.where((c) {
+      final s = (c['status'] ?? 'Active').toString();
+      return s == 'Active' || s == 'Online' || s == 'Unknown';
+    }).length;
+    final standbyCount = _cameras.where((c) => (c['status'] ?? '') == 'Standby').length;
 
     return Scaffold(
       backgroundColor: context.bgPrimary,
@@ -250,23 +278,27 @@ class _CameraManagementScreenState extends State<CameraManagementScreen> {
           onPressed: () => Navigator.pop(context),
           icon: Icon(Icons.arrow_back_ios_rounded, size: 18, color: context.textPrimary),
         ),
-        title: Text('Camera Management', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: context.textPrimary)),
+        title: Text(
+          isAdmin ? 'Camera Management' : 'Camera Network',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: context.textPrimary),
+        ),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: ElevatedButton.icon(
-              onPressed: _addOrEditCamera,
-              icon: const Icon(Icons.add_rounded, size: 16),
-              label: const Text('Add Camera'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.accentPrimary,
-                foregroundColor: Colors.black,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          if (isAdmin)
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: ElevatedButton.icon(
+                onPressed: _addOrEditCamera,
+                icon: const Icon(Icons.add_rounded, size: 16),
+                label: const Text('Add Camera'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accentPrimary,
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                ),
               ),
             ),
-          ),
         ],
       ),
       body: _loading
@@ -334,21 +366,28 @@ class _CameraManagementScreenState extends State<CameraManagementScreen> {
                           Text('Add campus cameras to monitor security events and zone breaches.',
                               textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: context.textSecondary)),
                           const SizedBox(height: 16),
-                          ElevatedButton.icon(
-                            onPressed: () => _addOrEditCamera(),
-                            icon: const Icon(Icons.add_rounded, size: 16),
-                            label: const Text('Add Camera'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.accentPrimary,
-                              foregroundColor: Colors.black,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          if (isAdmin)
+                            ElevatedButton.icon(
+                              onPressed: () => _addOrEditCamera(),
+                              icon: const Icon(Icons.add_rounded, size: 16),
+                              label: const Text('Add Camera'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.accentPrimary,
+                                foregroundColor: Colors.black,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                            )
+                          else
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Text('Contact a campus administrator to configure cameras.',
+                                  textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: context.textMuted)),
                             ),
-                          ),
                         ],
                       ),
                     )
                   else
-                    for (final cam in _cameras) _cameraCard(context, cam),
+                    for (final cam in _cameras) _cameraCard(context, cam, isAdmin),
                 ],
               ),
             ),
@@ -372,9 +411,10 @@ class _CameraManagementScreenState extends State<CameraManagementScreen> {
     );
   }
 
-  Widget _cameraCard(BuildContext context, Map<String, dynamic> cam) {
-    final status = cam['status']?.toString() ?? 'Active';
-    final isActive = status == 'Active';
+  Widget _cameraCard(BuildContext context, Map<String, dynamic> cam, bool isAdmin) {
+    final rawStatus = cam['status']?.toString() ?? 'Active';
+    final status = (rawStatus == 'Unknown' || rawStatus.isEmpty) ? 'Active' : rawStatus;
+    final isActive = status == 'Active' || status == 'Online';
     final statusColor = isActive ? AppColors.online : (status == 'Standby' ? AppColors.warning : AppColors.fire);
 
     return Container(
@@ -492,22 +532,24 @@ class _CameraManagementScreenState extends State<CameraManagementScreen> {
                       padding: EdgeInsets.zero,
                       onPressed: () => _testCamera(cam),
                     ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: Icon(Icons.edit_outlined, size: 18, color: context.textSecondary),
-                      tooltip: 'Edit',
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                      padding: EdgeInsets.zero,
-                      onPressed: () => _addOrEditCamera(cam),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline_rounded, size: 18, color: AppColors.fire),
-                      tooltip: 'Remove',
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                      padding: EdgeInsets.zero,
-                      onPressed: () => _confirmDelete(cam),
-                    ),
+                    if (isAdmin) ...[
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: Icon(Icons.edit_outlined, size: 18, color: context.textSecondary),
+                        tooltip: 'Edit',
+                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        padding: EdgeInsets.zero,
+                        onPressed: () => _addOrEditCamera(cam),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline_rounded, size: 18, color: AppColors.fire),
+                        tooltip: 'Remove',
+                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        padding: EdgeInsets.zero,
+                        onPressed: () => _confirmDelete(cam),
+                      ),
+                    ],
                   ],
                 ),
               ],

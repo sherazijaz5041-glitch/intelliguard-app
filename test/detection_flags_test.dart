@@ -21,7 +21,7 @@ void main() {
     TFLiteDetectionService.setViolenceDetection(enabled: false);
     TFLiteDetectionService.setPersonDetection(enabled: true);
     TFLiteDetectionService.setFireThreshold(0.85);
-    TFLiteDetectionService.setSmokeThreshold(0.82);
+    TFLiteDetectionService.setSmokeThreshold(0.72);
   });
 
   // ---------------------------------------------------------------------------

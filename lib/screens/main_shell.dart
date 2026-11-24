@@ -41,7 +41,10 @@ class _MainShellState extends State<MainShell> {
     final auth = context.watch<AuthProvider>();
 
     final screens = [
-      DashboardScreen(onViewAllAlerts: _goToLogs),
+      DashboardScreen(
+        onViewAllAlerts: _goToLogs,
+        isActive: _index == 0,
+      ),
       const EventLogsScreen(),
       const ReportsScreen(),
       const SettingsScreen(),

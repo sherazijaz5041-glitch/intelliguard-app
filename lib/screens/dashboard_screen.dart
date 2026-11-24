@@ -8,6 +8,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../main.dart';
 import '../models/camera_info.dart';
 import '../providers/alerts_provider.dart';
 import '../services/local_db_service.dart';
@@ -19,13 +20,14 @@ import 'incident_details_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final VoidCallback? onViewAllAlerts;
-  const DashboardScreen({super.key, this.onViewAllAlerts});
+  final bool isActive;
+  const DashboardScreen({super.key, this.onViewAllAlerts, this.isActive = true});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingObserver {
+class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingObserver, RouteAware {
   List<CameraInfo> _cameras = [];
   String _selectedCameraId = 'CAM-01';
   Timer? _clockTimer;
@@ -37,6 +39,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   bool _cameraPermissionDenied = false;
   bool _cameraInitializing = false;
   bool _captureInProgress = false;
+  bool _isRouteCovered = false;
+
+  bool get _shouldCameraRun => widget.isActive && !_isRouteCovered;
 
   @override
   void initState() {
@@ -47,8 +52,71 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     });
     LocalDbService.referenceRevision.addListener(_loadCameras);
     _loadCameras();
-    _initDeviceCamera();
-    _startPredictionLoop();
+    if (_shouldCameraRun) {
+      _initDeviceCamera();
+      _startPredictionLoop();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final modalRoute = ModalRoute.of(context);
+    if (modalRoute != null) {
+      appRouteObserver.subscribe(this, modalRoute);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive != widget.isActive) {
+      if (widget.isActive) {
+        _resumeCamera();
+      } else {
+        _pauseCamera();
+      }
+    }
+  }
+
+  @override
+  void didPushNext() {
+    // Another screen was pushed over this one (e.g. Incident Details or Drawer screens)
+    _isRouteCovered = true;
+    _pauseCamera();
+  }
+
+  @override
+  void didPopNext() {
+    // Top screen popped, back to Dashboard
+    _isRouteCovered = false;
+    _resumeCamera();
+  }
+
+  void _pauseCamera() {
+    _predictTimer?.cancel();
+    _predictTimer = null;
+    final controller = _cameraController;
+    _cameraController = null;
+    if (controller != null) {
+      try {
+        controller.dispose().catchError((_) {});
+      } catch (_) {}
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _resumeCamera() {
+    if (!_shouldCameraRun) return;
+    if (_cameraController == null && !_cameraInitializing) {
+      _initDeviceCamera().then((_) {
+        if (mounted && _shouldCameraRun && _predictTimer == null) {
+          _startPredictionLoop();
+        }
+      });
+    } else if (_predictTimer == null) {
+      _startPredictionLoop();
+    }
   }
 
   Future<void> _loadCameras() async {
@@ -65,14 +133,17 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   }
 
   Future<void> _initDeviceCamera() async {
-    if (_cameraInitializing) return; // guard against overlapping init attempts
+    if (!_shouldCameraRun || _cameraInitializing) return; // guard against overlapping init attempts
     setState(() {
       _cameraInitializing = true;
       _cameraPermissionDenied = false;
     });
     try {
       _availableCameras = await availableCameras();
-      if (!mounted) return;
+      if (!mounted || !_shouldCameraRun) {
+        setState(() => _cameraInitializing = false);
+        return;
+      }
       if (_availableCameras.isEmpty) {
         setState(() => _cameraInitializing = false);
         return;
@@ -93,7 +164,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
       final controller = CameraController(back, ResolutionPreset.medium, enableAudio: false);
       await controller.initialize();
-      if (!mounted) {
+      if (!mounted || !_shouldCameraRun) {
         await controller.dispose();
         return;
       }
@@ -109,12 +180,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         _cameraInitializing = false;
         _cameraPermissionDenied = isPermissionIssue;
       });
-      if (!isPermissionIssue) {
+      if (!isPermissionIssue && _shouldCameraRun) {
         // Likely a transient "camera resource busy" error (e.g. right after a
         // dispose from a lifecycle blip) rather than a real permission denial —
         // worth one automatic retry before making the user tap anything.
         Future.delayed(const Duration(milliseconds: 800), () {
-          if (mounted && _cameraController == null && !_cameraInitializing) {
+          if (mounted && _cameraController == null && !_cameraInitializing && _shouldCameraRun) {
             _initDeviceCamera();
           }
         });
@@ -130,10 +201,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   }
 
   Future<void> _captureAndPredict() async {
-    if (!mounted || _cameras.isEmpty || _captureInProgress || _predictTimer?.isActive != true) return;
+    if (!mounted || !_shouldCameraRun || _cameras.isEmpty || _captureInProgress || _predictTimer?.isActive != true) return;
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) {
-      if (!_cameraInitializing) _initDeviceCamera();
+      if (!_cameraInitializing && _shouldCameraRun) _initDeviceCamera();
       return;
     }
     if (controller.value.isTakingPicture) return;
@@ -148,6 +219,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       file = await controller.takePicture();
       final bytes = await file.readAsBytes();
       if (!mounted ||
+          !_shouldCameraRun ||
           !identical(controller, _cameraController) ||
           _predictTimer?.isActive != true ||
           cameraId != _selectedCameraId) {
@@ -178,12 +250,11 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     LocalDbService.referenceRevision.removeListener(_loadCameras);
     WidgetsBinding.instance.removeObserver(this);
     _clockTimer?.cancel();
-    _predictTimer?.cancel();
-    _predictTimer = null;
-    _cameraController?.dispose();
+    _pauseCamera();
     super.dispose();
   }
 
@@ -195,20 +266,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     // the camera on every one of those was the root cause of the feed randomly
     // dropping to "No camera feed" shortly after an alert notification fired.
     if (state == AppLifecycleState.paused) {
-      _predictTimer?.cancel();
-      _predictTimer = null;
-      final controller = _cameraController;
-      if (controller != null && controller.value.isInitialized) {
-        controller.dispose();
-      }
-      _cameraController = null;
+      _pauseCamera();
     } else if (state == AppLifecycleState.resumed) {
-      if (_cameraController == null && !_cameraInitializing) {
-        _initDeviceCamera().then((_) {
-          if (mounted && _predictTimer == null) {
-            _startPredictionLoop();
-          }
-        });
+      if (_shouldCameraRun) {
+        _resumeCamera();
       }
     }
   }

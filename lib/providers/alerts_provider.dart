@@ -167,12 +167,18 @@ class AlertsProvider extends ChangeNotifier {
     if (!_disposed) await fetchLatestEvents(force: true);
   }
 
-  /// Sets the alert to any valid status (allows going back, e.g. Resolved -> Detected).
+  /// Sets the alert to a new status following forward-only progression (Detected -> In Progress -> Resolved).
+  /// Reverting (e.g. Resolved -> Detected) is blocked to match Supabase constraints.
   Future<void> setAlertStatus(String id, String status) async {
     if (_disposed) return;
     if (!isValidStatus(status)) return;
     final index = alerts.indexWhere((a) => a.id == id);
     if (index != -1) {
+      final current = alerts[index].status;
+      if (!isStatusTransitionAllowed(current, status)) {
+        debugPrint('[AlertsProvider] Cannot revert status from $current to $status');
+        return;
+      }
       alerts[index] = alerts[index].copyWith(status: status);
       notifyListeners();
     }

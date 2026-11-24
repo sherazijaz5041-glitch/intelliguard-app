@@ -43,6 +43,8 @@ Future<void> main() async {
   runApp(const IntelliGuardApp());
 }
 
+final RouteObserver<ModalRoute<dynamic>> appRouteObserver = RouteObserver<ModalRoute<dynamic>>();
+
 class IntelliGuardApp extends StatelessWidget {
   const IntelliGuardApp({super.key});
   @override
@@ -58,6 +60,7 @@ class IntelliGuardApp extends StatelessWidget {
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         themeMode: themeProvider.mode,
+        navigatorObservers: [appRouteObserver],
         home: const SplashScreen(next: _RootRouter()),
       ),
     ),
